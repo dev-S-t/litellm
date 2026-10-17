@@ -55,3 +55,33 @@ def test_speech_keeps_an_internal_prefixed_kwarg_out_of_the_elevenlabs_request(r
     sent: Final = json.loads(respx_mock.calls[0].request.content)
     assert "_litellm_undeclared_sentinel" not in sent, sent
     assert sent["text"] == "hi"
+
+
+@pytest.mark.parametrize(
+    ("response_format", "output_format"),
+    [
+        # OpenAI defines response_format="pcm" as raw 24 kHz samples, see
+        # https://developers.openai.com/api/docs/guides/text-to-speech (checked 2026-10-16)
+        ("pcm", "pcm_24000"),
+        ("pcm_44100", "pcm_44100"),
+    ],
+)
+def test_speech_requests_openai_pcm_at_24khz_and_keeps_native_formats(
+    respx_mock: respx.MockRouter, response_format: str, output_format: str
+) -> None:
+    api_base: Final = "http://localhost:12346"
+    mock_route: Final = respx_mock.post(url__regex=rf"{api_base}/v1/text-to-speech/.*").mock(
+        return_value=httpx.Response(status_code=200, content=b"\x00\x00", headers={"content-type": "audio/pcm"})
+    )
+
+    litellm.speech(
+        model="elevenlabs/eleven_multilingual_v2",
+        input="hi",
+        voice="21m00Tcm4TlvDq8ikWAM",
+        response_format=response_format,
+        api_base=api_base,
+        api_key="fake_elevenlabs_api_key",
+    )
+
+    assert mock_route.called
+    assert mock_route.calls.last.request.url.params["output_format"] == output_format
